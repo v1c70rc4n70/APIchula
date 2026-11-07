@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>APIchula KeyVault — Gestor Cifrado de API Keys</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <!-- PANTALLA DE CONFIGURACIÓN / DESBLOQUEO DE BÓVEDA -->
+  <div id="auth-screen" class="auth-overlay hidden">
+    <div class="auth-card">
+      <div class="brand-header">
+        <div class="brand-logo">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <circle cx="12" cy="11" r="2.5"/>
+            <path d="M12 13.5V16"/>
+          </svg>
+        </div>
+        <div>
+          <h1>APIchula KeyVault</h1>
+          <p class="subtitle">Bóveda local cifrada con AES-256-GCM &amp; PBKDF2</p>
+        </div>
+      </div>
+
+      <!-- Formulario de primera vez -->
+      <form id="setup-form" class="auth-form hidden">
+        <div class="info-banner">
+          <strong>Inicializar bóveda nueva</strong>
+          <p>Crea una contraseña maestra. Tus API Keys se cifrarán en disco con AES-256-GCM y nunca se guardarán en texto plano.</p>
+        </div>
+        <div class="field">
+          <label for="setup-password">Contraseña Maestra (mín. 6 caracteres)</label>
+          <input type="password" id="setup-password" required minlength="6" placeholder="••••••••••••" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label for="setup-password-confirm">Confirmar Contraseña Maestra</label>
+          <input type="password" id="setup-password-confirm" required minlength="6" placeholder="••••••••••••" autocomplete="new-password" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Crear Bóveda Cifrada</button>
+      </form>
+
+      <!-- Formulario de desbloqueo -->
+      <form id="unlock-form" class="auth-form hidden">
+        <div class="field">
+          <label for="unlock-password">Contraseña Maestra</label>
+          <input type="password" id="unlock-password" required placeholder="Introduce tu contraseña maestra..." autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Desbloquear Bóveda</button>
+      </form>
+
+      <div id="auth-error" class="error-box hidden"></div>
+      <div class="auth-footer">
+        <span id="db-path-label" class="mono-text"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- APLICACIÓN PRINCIPAL -->
+  <div id="app-shell" class="app-layout hidden">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-logo small">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <div>
+          <h2>KeyVault</h2>
+          <span class="badge badge-purple">AES-256-GCM</span>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <span class="sidebar-title">VISTAS</span>
+        <button class="nav-item active" data-filter-health="all">
+          <span>Todas las claves</span>
+          <span id="count-all" class="pill">0</span>
+        </button>
+        <button class="nav-item" data-filter-health="favorites">
+          <span>★ Favoritas</span>
+        </button>
+        <button class="nav-item" data-filter-health="alerts">
+          <span>⚠️ Alertas / Expiración</span>
+          <span id="count-alerts" class="pill pill-warn">0</span>
+        </button>
+        <button class="nav-item" data-filter-health="rotation_due">
+          <span>🔄 Rotación pendiente</span>
+          <span id="count-rotation" class="pill">0</span>
+        </button>
+        <button class="nav-item" data-filter-health="revoked">
+          <span>🕰️ Antiguas / Revocadas</span>
+          <span id="count-revoked" class="pill">0</span>
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <span class="sidebar-title">ENTORNOS</span>
+        <div id="env-filter-list" class="chip-list">
+          <button class="chip active" data-env="">Todos</button>
+          <button class="chip" data-env="prod">prod</button>
+          <button class="chip" data-env="staging">staging</button>
+          <button class="chip" data-env="dev">dev</button>
+          <button class="chip" data-env="lab">lab</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <span class="sidebar-title">PROYECTOS / CLIENTES</span>
+        <div id="project-filter-list" class="nav-sublist"></div>
+      </div>
+
+      <div class="sidebar-section">
+        <span class="sidebar-title">CATEGORÍAS</span>
+        <div id="category-filter-list" class="nav-sublist"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button id="btn-audit-logs" class="btn btn-ghost btn-sm btn-block">📋 Registro de Auditoría</button>
+        <button id="btn-change-pw" class="btn btn-ghost btn-sm btn-block">🔑 Cambiar Contraseña</button>
+        <button id="btn-lock-vault" class="btn btn-danger-outline btn-sm btn-block">🔒 Bloquear Bóveda</button>
+      </div>
+    </aside>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="main-area">
+      <!-- TOPBAR -->
+      <header class="topbar">
+        <div class="search-wrapper">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="search"
+            id="search-input"
+            placeholder="Buscar por nombre, proveedor, variable ENV, proyecto o etiqueta... (Atajo: /)"
+          />
+        </div>
+        <div class="topbar-actions">
+          <button id="btn-deep-scan" class="btn btn-primary" title="Escaneo exhaustivo de todo el PC: archivos .env, navegadores, llaveros, historiales y backups (activas y antiguas)">🔍 Escaneo Exhaustivo de API Keys</button>
+          <button id="btn-cloud-sync" class="btn btn-secondary">🚀 Conectar GitHub / Supabase / Cloudflare</button>
+          <button id="btn-import-env" class="btn btn-secondary">📥 Importar .env</button>
+          <button id="btn-export-env" class="btn btn-secondary">📤 Exportar (.env / JSON)</button>
+          <button id="btn-new-key" class="btn btn-secondary">+ Nueva API Key</button>
+        </div>
+      </header>
+
+      <!-- TARJETAS DE ESTADÍSTICAS Y SALUD -->
+      <section class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-label">Total API Keys</span>
+          <strong id="stat-total" class="stat-value">0</strong>
+          <span class="stat-meta">Cifradas en bóveda</span>
+        </div>
+        <div class="stat-card stat-ok">
+          <span class="stat-label">Saludables / Activas</span>
+          <strong id="stat-healthy" class="stat-value">0</strong>
+          <span class="stat-meta">Vigentes y al día</span>
+        </div>
+        <div class="stat-card stat-warn">
+          <span class="stat-label">Por Expirar / Vencidas</span>
+          <strong id="stat-expiring" class="stat-value">0</strong>
+          <span class="stat-meta">Próximos 14 días o caducadas</span>
+        </div>
+        <div class="stat-card stat-info">
+          <span class="stat-label">Rotación Sugerida</span>
+          <strong id="stat-rotation" class="stat-value">0</strong>
+          <span class="stat-meta">Superaron ciclo de rotación</span>
+        </div>
+      </section>
+
+      <!-- BARRA VISUAL DE ENVÍO RÁPIDO A GITHUB / SUPABASE / CLOUDFLARE -->
+      <section class="quick-cloud-bar">
+        <div>
+          <strong>⚡ Detección Continua y Sincronización Ultra-Rápida</strong>
+          <p class="subtitle">Detecta si una clave se crea o cambia en otro sitio, conserva las antiguas/rotas y sincroniza con GitHub, Supabase y Cloudflare.</p>
+        </div>
+        <div class="quick-cloud-buttons">
+          <button type="button" id="btn-auto-import" class="btn btn-primary btn-sm" title="Escanear todo el sistema para copiar nuevas claves, actualizar las que hayan cambiado y rescatar las antiguas/rotadas">🔍 Escanear Todo el Sistema (Activas + Antiguas)</button>
+          <button type="button" id="btn-quick-gh" class="btn btn-cloud-gh btn-sm">🐙 Subir / Copiar GitHub</button>
+          <button type="button" id="btn-quick-sb" class="btn btn-cloud-sb btn-sm">⚡ Subir / Copiar Supabase</button>
+          <button type="button" id="btn-quick-cf" class="btn btn-cloud-cf btn-sm">☁️ Subir / Copiar Cloudflare</button>
+        </div>
+      </section>
+
+      <!-- BARRA DE FILTROS ACTIVOS -->
+      <section class="filter-bar">
+        <div class="filter-left">
+          <label for="provider-select" class="inline-label">Proveedor:</label>
+          <select id="provider-select" class="select-sm">
+            <option value="">Todos los proveedores</option>
+          </select>
+          <span id="active-filter-indicator" class="filter-tag hidden"></span>
+        </div>
+        <div class="filter-right">
+          <span id="results-counter" class="muted-text">0 claves mostradas</span>
+        </div>
+      </section>
+
+      <!-- LISTADO DE API KEYS -->
+      <section id="keys-container" class="keys-list"></section>
+    </main>
+  </div>
+
+  <!-- MODAL CREAR / EDITAR API KEY -->
+  <div id="key-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3 id="key-modal-title">Nueva API Key</h3>
+        <button class="modal-close" data-close="key-modal">&times;</button>
+      </div>
+      <form id="key-form" class="modal-body">
+        <input type="hidden" id="key-id" />
+
+        <!-- Plantillas rápidas de proveedores comunes -->
+        <div class="preset-bar">
+          <span class="preset-label">Plantilla rápida:</span>
+          <button type="button" class="chip-preset" data-preset="supabase">Supabase</button>
+          <button type="button" class="chip-preset" data-preset="github">GitHub</button>
+          <button type="button" class="chip-preset" data-preset="cloudflare">Cloudflare</button>
+          <button type="button" class="chip-preset" data-preset="openai">OpenAI</button>
+          <button type="button" class="chip-preset" data-preset="anthropic">Anthropic</button>
+          <button type="button" class="chip-preset" data-preset="shodan">Shodan</button>
+          <button type="button" class="chip-preset" data-preset="virustotal">VirusTotal</button>
+          <button type="button" class="chip-preset" data-preset="aws">AWS</button>
+          <button type="button" class="chip-preset" data-preset="stripe">Stripe</button>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="field">
+            <label for="f-name">Nombre descriptivo *</label>
+            <input type="text" id="f-name" required placeholder="Ej. OpenAI Producción Agentes" />
+          </div>
+          <div class="field">
+            <label for="f-provider">Proveedor / Servicio *</label>
+            <input type="text" id="f-provider" required placeholder="Ej. OpenAI, Shodan, GitHub, AWS..." />
+          </div>
+        </div>
+
+        <div class="form-grid-3">
+          <div class="field">
+            <label for="f-category">Categoría</label>
+            <select id="f-category">
+              <option value="AI / LLM">AI / LLM</option>
+              <option value="OSINT / Sec">OSINT / Seguridad</option>
+              <option value="Cloud / Infra">Cloud / Infraestructura</option>
+              <option value="DevOps / Git">DevOps / Git</option>
+              <option value="Pagos / SaaS">Pagos / SaaS</option>
+              <option value="Mensajería">Mensajería / Bots</option>
+              <option value="Base de Datos">Base de Datos</option>
+              <option value="API General">API General</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="f-project">Proyecto / Cliente</label>
+            <input type="text" id="f-project" placeholder="Ej. mi-app, cliente-x, global" value="default" />
+          </div>
+          <div class="field">
+            <label for="f-environment">Entorno</label>
+            <select id="f-environment">
+              <option value="prod">Producción (prod)</option>
+              <option value="staging">Staging / Pre-prod</option>
+              <option value="dev">Desarrollo (dev)</option>
+              <option value="lab">Laboratorio (lab)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="field">
+            <label for="f-apikey">API Key / Token Secreto <span id="f-apikey-req">*</span></label>
+            <div class="input-with-btn">
+              <input type="password" id="f-apikey" placeholder="sk-..." autocomplete="off" />
+              <button type="button" id="btn-toggle-f-key" class="btn btn-ghost btn-sm" title="Mostrar/Ocultar">👁️</button>
+              <button type="button" id="btn-gen-random" class="btn btn-secondary btn-sm" title="Generar token aleatorio seguro">🎲 Generar</button>
+            </div>
+            <small id="f-apikey-help" class="field-hint">Al editar, déjalo en blanco si no deseas cambiar el secreto actual.</small>
+          </div>
+          <div class="field">
+            <label for="f-env-var">Nombre de Variable (.env)</label>
+            <input type="text" id="f-env-var" class="mono-input" placeholder="Ej. OPENAI_API_KEY" />
+            <small class="field-hint">Se usa al exportar a archivos <code>.env</code> o terminal.</small>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="field">
+            <label for="f-secondary">Secreto Secundario / Secret Key / Org ID (Opcional)</label>
+            <input type="password" id="f-secondary" placeholder="Ej. AWS_SECRET_ACCESS_KEY o Webhook Secret" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="f-tags">Etiquetas (separadas por coma)</label>
+            <input type="text" id="f-tags" placeholder="redteam, recon, facturacion, lectura" />
+          </div>
+        </div>
+
+        <div class="form-grid-3">
+          <div class="field">
+            <label for="f-expires">Fecha de Expiración (opcional)</label>
+            <input type="date" id="f-expires" />
+          </div>
+          <div class="field">
+            <label for="f-rotation-days">Ciclo de Rotación (días)</label>
+            <input type="number" id="f-rotation-days" min="0" max="3650" value="90" />
+          </div>
+          <div class="field">
+            <label for="f-status">Estado de la Clave</label>
+            <select id="f-status">
+              <option value="active">Activa</option>
+              <option value="revoked">Revocada / Deshabilitada</option>
+            </select>
+          </div>
+        </div>
+
+        <details class="advanced-box">
+          <summary>⚙️ Opciones avanzadas: URLs y Comprobación HTTP (Health Check)</summary>
+          <div class="advanced-content">
+            <div class="form-grid-2">
+              <div class="field">
+                <label for="f-base-url">URL Base de la API</label>
+                <input type="url" id="f-base-url" placeholder="https://api.openai.com/v1" />
+              </div>
+              <div class="field">
+                <label for="f-docs-url">URL Consola / Documentación</label>
+                <input type="url" id="f-docs-url" placeholder="https://platform.openai.com/api-keys" />
+              </div>
+            </div>
+            <div class="form-grid-3">
+              <div class="field">
+                <label for="f-check-url">Endpoint de Verificación (GET/POST)</label>
+                <input type="url" id="f-check-url" placeholder="https://api.openai.com/v1/models" />
+              </div>
+              <div class="field">
+                <label for="f-check-header">Cabecera HTTP</label>
+                <input type="text" id="f-check-header" value="Authorization" placeholder="Authorization o X-API-Key" />
+              </div>
+              <div class="field">
+                <label for="f-check-prefix">Prefijo de Cabecera</label>
+                <input type="text" id="f-check-prefix" value="Bearer " placeholder="Bearer  (o vacío)" />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div class="field">
+          <label for="f-notes">Notas cifradas (permisos, scopes, propietario, límites de cuota...)</label>
+          <textarea id="f-notes" rows="2" placeholder="Notas adicionales protegidas con cifrado AES-GCM..."></textarea>
+        </div>
+
+        <div class="checkbox-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="f-favorite" />
+            <span>Marcar como clave favorita (fijar arriba)</span>
+          </label>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="key-modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar en Bóveda</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL ROTACIÓN DE CLAVE E HISTORIAL -->
+  <div id="rotate-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🔄 Rotar API Key</h3>
+        <button class="modal-close" data-close="rotate-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="rotate-key-label" class="subtitle"></p>
+        <form id="rotate-form">
+          <input type="hidden" id="rotate-key-id" />
+          <div class="field">
+            <label for="rotate-new-secret">Nueva API Key *</label>
+            <input type="password" id="rotate-new-secret" required placeholder="Pega la nueva clave generada en el proveedor..." autocomplete="off" />
+          </div>
+          <div class="form-grid-2">
+            <div class="field">
+              <label for="rotate-reason">Motivo de rotación</label>
+              <input type="text" id="rotate-reason" placeholder="Ej. Rotación trimestral preventiva" />
+            </div>
+            <div class="field">
+              <label for="rotate-expires">Nueva fecha de expiración (opcional)</label>
+              <input type="date" id="rotate-expires" />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" data-close="rotate-modal">Cancelar</button>
+            <button type="submit" class="btn btn-primary">Aplicar Rotación</button>
+          </div>
+        </form>
+
+        <hr class="divider" />
+        <h4>Historial de claves anteriores (cifradas)</h4>
+        <div id="rotation-history-list" class="history-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL EXPORTAR (.ENV / SHELL / JSON / YAML) -->
+  <div id="export-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3>📤 Exportar API Keys</h3>
+        <button class="modal-close" data-close="export-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid-3">
+          <div class="field">
+            <label for="exp-format">Formato de salida</label>
+            <select id="exp-format">
+              <option value="dotenv">Archivo .env (KEY="VALUE")</option>
+              <option value="shell">Bash / Terminal (export KEY='VALUE')</option>
+              <option value="json">JSON estructurado</option>
+              <option value="yaml">Docker Compose / YAML</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="exp-project">Filtrar por Proyecto</label>
+            <select id="exp-project">
+              <option value="">Todos los proyectos</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="exp-env">Filtrar por Entorno</label>
+            <select id="exp-env">
+              <option value="">Todos los entornos</option>
+              <option value="prod">prod</option>
+              <option value="staging">staging</option>
+              <option value="dev">dev</option>
+              <option value="lab">lab</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Vista previa generada</label>
+          <textarea id="exp-preview" rows="12" readonly class="mono-textarea"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-copy-export" class="btn btn-secondary">📋 Copiar todo al Portapapeles</button>
+          <button type="button" id="btn-download-export" class="btn btn-primary">💾 Descargar Archivo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL IMPORTAR DESDE .ENV -->
+  <div id="import-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📥 Importar claves desde archivo .env</h3>
+        <button class="modal-close" data-close="import-modal">&times;</button>
+      </div>
+      <form id="import-form" class="modal-body">
+        <p class="subtitle">Pega el contenido de tu archivo <code>.env</code> o cárgala desde disco. Se detectará el proveedor automáticamente cuando sea posible.</p>
+        <div class="form-grid-2">
+          <div class="field">
+            <label for="imp-project">Asignar al Proyecto</label>
+            <input type="text" id="imp-project" value="default" required />
+          </div>
+          <div class="field">
+            <label for="imp-env">Entorno</label>
+            <select id="imp-env">
+              <option value="dev">dev</option>
+              <option value="prod">prod</option>
+              <option value="staging">staging</option>
+              <option value="lab">lab</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="imp-file">Seleccionar archivo local (.env)</label>
+          <input type="file" id="imp-file" accept=".env,.txt,text/plain" />
+        </div>
+        <div class="field">
+          <label for="imp-content">Contenido KEY=VALUE *</label>
+          <textarea id="imp-content" rows="8" required class="mono-textarea" placeholder="OPENAI_API_KEY=sk-...&#10;SHODAN_API_KEY=..."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="import-modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Importar y Cifrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL AUDITORÍA -->
+  <div id="audit-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3>📋 Registro de Auditoría de la Bóveda</h3>
+        <button class="modal-close" data-close="audit-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="audit-list" class="audit-table-wrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL CAMBIAR CONTRASEÑA MAESTRA -->
+  <div id="pw-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🔑 Cambiar Contraseña Maestra</h3>
+        <button class="modal-close" data-close="pw-modal">&times;</button>
+      </div>
+      <form id="pw-form" class="modal-body">
+        <p class="subtitle">Todas las claves y su historial se volverán a cifrar con una nueva clave derivada.</p>
+        <div class="field">
+          <label for="pw-current">Contraseña Maestra Actual</label>
+          <input type="password" id="pw-current" required />
+        </div>
+        <div class="field">
+          <label for="pw-new">Nueva Contraseña Maestra (mín. 6 caracteres)</label>
+          <input type="password" id="pw-new" required minlength="6" />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="pw-modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Recifrar Bóveda</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL CONEXIÓN AUTOMÁTICA Y COPIAR/PEGAR: GITHUB, SUPABASE, CLOUDFLARE -->
+  <div id="sync-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-xl">
+      <div class="modal-header">
+        <h3>🚀 Conectar y Sincronizar Secretos (GitHub · Supabase · Cloudflare)</h3>
+        <button class="modal-close" data-close="sync-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- Filtros globales para qué claves sincronizar/generar -->
+        <div class="sync-filter-bar">
+          <div>
+            <strong>¿Qué claves quieres enviar o copiar?</strong>
+            <p class="subtitle">Se incluirán todas las claves activas de este filtro con sus valores reales listos para usar.</p>
+          </div>
+          <div class="sync-filter-controls">
+            <select id="sync-project" class="select-sm">
+              <option value="">Todos los proyectos</option>
+            </select>
+            <select id="sync-env" class="select-sm">
+              <option value="">Todos los entornos</option>
+              <option value="prod">prod</option>
+              <option value="staging">staging</option>
+              <option value="dev">dev</option>
+              <option value="lab">lab</option>
+            </select>
+            <span id="sync-key-count" class="badge badge-purple">0 claves</span>
+          </div>
+        </div>
+
+        <!-- PESTAÑAS -->
+        <div class="tabs-bar">
+          <button type="button" class="tab-btn active" data-sync-tab="tab-github">🐙 1. GitHub Secrets</button>
+          <button type="button" class="tab-btn" data-sync-tab="tab-supabase">⚡ 2. Supabase Secrets &amp; Vault</button>
+          <button type="button" class="tab-btn" data-sync-tab="tab-cloudflare">☁️ 3. Cloudflare Workers / Pages</button>
+        </div>
+
+        <!-- TAB 1: GITHUB -->
+        <div id="tab-github" class="sync-tab-pane">
+          <div class="integration-grid">
+            <div class="integration-box">
+              <h4>⚡ Opción A: Envío Automático en 1 Clic</h4>
+              <ol class="step-list">
+                <li>Crea un token en <a href="https://github.com/settings/tokens/new?scopes=repo" target="_blank" rel="noopener">GitHub Classic Token ↗</a> (marca permiso <code>repo</code>) o usa tu sesión de <code>gh auth login</code>.</li>
+                <li>Pon el nombre de tu repositorio abajo y pulsa <strong>Subir a GitHub ahora</strong>.</li>
+              </ol>
+              <div class="field">
+                <label for="cfg-gh-repo">Repositorio GitHub (usuario/repositorio) * <span id="gh-auth-badge" class="badge badge-env-dev"></span></label>
+                <div class="input-with-btn">
+                  <input type="text" id="cfg-gh-repo" list="gh-repo-datalist" placeholder="Ej. mi-usuario/mi-repositorio" />
+                </div>
+                <datalist id="gh-repo-datalist"></datalist>
+              </div>
+              <div class="form-grid-2">
+                <div class="field">
+                  <label for="cfg-gh-env">Entorno GitHub (opcional)</label>
+                  <input type="text" id="cfg-gh-env" placeholder="Vacío = Repo global, o prod" />
+                </div>
+                <div class="field">
+                  <label for="cfg-gh-token">GitHub Token (ghp_...) <span id="hint-gh-token" class="mono-text"></span></label>
+                  <input type="password" id="cfg-gh-token" placeholder="Opcional si ya hiciste gh auth login" autocomplete="off" />
+                </div>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn btn-secondary btn-sm" data-save-cfg="github">💾 Guardar config</button>
+                <button type="button" class="btn btn-primary" data-push-target="github">🚀 Subir Secretos a GitHub Ahora</button>
+              </div>
+            </div>
+
+            <div class="integration-box">
+              <div class="snippet-header">
+                <h4>📋 Opción B: Copiar y Pegar en tu Terminal</h4>
+                <button type="button" class="btn btn-secondary btn-sm" data-copy-target="snip-github">📋 Copiar Comandos</button>
+              </div>
+              <p class="subtitle">Comandos <code>gh secret set</code> autogenerados con tus claves reales:</p>
+              <textarea id="snip-github" rows="6" readonly class="mono-textarea"></textarea>
+              <div style="margin-top:6px;">
+                <span class="field-hint">Secretos actualmente activos en este repositorio de GitHub:</span>
+                <div id="gh-remote-secrets-list" class="key-tags" style="margin-top:4px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: SUPABASE -->
+        <div id="tab-supabase" class="sync-tab-pane hidden">
+          <div class="integration-grid">
+            <div class="integration-box">
+              <h4>⚡ Opción A: Envío Automático en 1 Clic (API Directa)</h4>
+              <ol class="step-list">
+                <li>Ve a <a href="https://supabase.com/dashboard/account/tokens" target="_blank" rel="noopener">Supabase Access Tokens ↗</a>, crea un token (empieza por <code>sbp_...</code>) y pégalo abajo.</li>
+                <li>Copia el <strong>Project ID (Reference ID)</strong> de tu proyecto en <em>Project Settings &rarr; General</em> (20 letras, ej. <code>abcdefghijklmnopqrst</code>).</li>
+                <li>Pulsa en <strong>Subir a Supabase Ahora</strong> (no requiere instalar Supabase CLI).</li>
+              </ol>
+              <div class="form-grid-2">
+                <div class="field">
+                  <label for="cfg-sb-ref">Supabase Project Ref ID *</label>
+                  <input type="text" id="cfg-sb-ref" placeholder="Ej. xyzabcdefghijklmnopq" />
+                </div>
+                <div class="field">
+                  <label for="cfg-sb-token">Access Token (sbp_...) * <span id="hint-sb-token" class="mono-text"></span></label>
+                  <input type="password" id="cfg-sb-token" placeholder="sbp_..." autocomplete="off" />
+                </div>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn btn-secondary btn-sm" data-save-cfg="supabase">💾 Guardar config</button>
+                <button type="button" class="btn btn-primary" data-push-target="supabase">⚡ Subir a Supabase Secrets Ahora</button>
+              </div>
+            </div>
+
+            <div class="integration-box">
+              <div class="snippet-header">
+                <h4>📋 Opción B: Copiar y Pegar (CLI o SQL Editor)</h4>
+                <div class="btn-row">
+                  <button type="button" class="btn btn-secondary btn-sm" data-copy-target="snip-supabase-cli">📋 Copiar CLI</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-copy-target="snip-supabase-sql">📋 Copiar SQL Vault</button>
+                </div>
+              </div>
+              <label class="field-hint">1) Para Edge Functions desde terminal (<code>npx supabase secrets set</code>):</label>
+              <textarea id="snip-supabase-cli" rows="4" readonly class="mono-textarea"></textarea>
+              <label class="field-hint" style="margin-top:8px;display:block;">2) Para guardar dentro de la Base de Datos Postgres (pegar en <strong>Supabase &rarr; SQL Editor</strong>):</label>
+              <textarea id="snip-supabase-sql" rows="5" readonly class="mono-textarea"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: CLOUDFLARE -->
+        <div id="tab-cloudflare" class="sync-tab-pane hidden">
+          <div class="integration-grid">
+            <div class="integration-box">
+              <h4>⚡ Opción A: Envío Automático en 1 Clic (API Cloudflare v4)</h4>
+              <ol class="step-list">
+                <li>Ve a <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">Cloudflare API Tokens ↗</a> &rarr; <em>Create Token</em> &rarr; usa la plantilla <strong>Edit Cloudflare Workers</strong>.</li>
+                <li>Copia tu <strong>Account ID</strong> (está en la barra derecha de Workers &amp; Pages en Cloudflare) y el nombre de tu Worker.</li>
+                <li>Pulsa en <strong>Subir a Cloudflare Ahora</strong>.</li>
+              </ol>
+              <div class="form-grid-2">
+                <div class="field">
+                  <label for="cfg-cf-account">Cloudflare Account ID *</label>
+                  <input type="text" id="cfg-cf-account" placeholder="Ej. 8f9a2b3c4d5e6f7a8b9c0d1e2f3a4b5c" />
+                </div>
+                <div class="field">
+                  <label for="cfg-cf-worker">Nombre del Worker *</label>
+                  <input type="text" id="cfg-cf-worker" placeholder="Ej. api-gateway-worker" />
+                </div>
+              </div>
+              <div class="form-grid-2">
+                <div class="field">
+                  <label for="cfg-cf-pages">Proyecto Cloudflare Pages (opcional)</label>
+                  <input type="text" id="cfg-cf-pages" placeholder="Ej. mi-web-pages" />
+                </div>
+                <div class="field">
+                  <label for="cfg-cf-token">Cloudflare API Token * <span id="hint-cf-token" class="mono-text"></span></label>
+                  <input type="password" id="cfg-cf-token" placeholder="Token con permiso Workers Scripts:Edit" autocomplete="off" />
+                </div>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn btn-secondary btn-sm" data-save-cfg="cloudflare">💾 Guardar config</button>
+                <button type="button" class="btn btn-primary" data-push-target="cloudflare">☁️ Subir a Cloudflare Ahora</button>
+              </div>
+            </div>
+
+            <div class="integration-box">
+              <div class="snippet-header">
+                <h4>📋 Opción B: Copiar y Pegar en Terminal (Wrangler Bulk)</h4>
+                <button type="button" class="btn btn-secondary btn-sm" data-copy-target="snip-cloudflare">📋 Copiar Comando Bulk</button>
+              </div>
+              <p class="subtitle">Sube todas las claves de golpe con <code>npx wrangler secret bulk</code>:</p>
+              <textarea id="snip-cloudflare" rows="9" readonly class="mono-textarea"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div id="sync-result-banner" class="info-banner hidden" style="margin-top:14px;margin-bottom:0;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST DE NOTIFICACIONES -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

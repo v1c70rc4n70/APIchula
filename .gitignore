@@ -1,0 +1,19 @@
+# Base de datos cifrada local — NUNCA subir a Git en la versión pública
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# Entornos y secretos sueltos
+.env
+*.env
+!*.env.example
+
+# Caché de Python y sistema
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+*.log
