@@ -1,0 +1,41 @@
+language: es-ES
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  auto_review:
+    enabled: true
+    drafts: false
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: false
+  path_filters:
+    - "!**/*.lock"
+    - "!**/vendor/**"
+    - "!**/dist/**"
+    - "!**/node_modules/**"
+  path_instructions:
+    - path: "**/*.{env,yml,yaml,tf,json}"
+      instructions: >
+        Señala cualquier secreto, token, clave o credencial en texto plano.
+        Señala permisos IAM/ACL demasiado amplios (wildcard, admin, 0.0.0.0/0).
+    - path: "**/auth/**,**/api/**"
+      instructions: >
+        Revisa con rigor: validación de entrada, control de acceso (IDOR),
+        inyección (SQL/command/XSS), gestión de sesiones y tokens.
+  tools:
+    semgrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    checkov:
+      enabled: true
+    osv-scanner:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  learnings:
+    scope: auto
